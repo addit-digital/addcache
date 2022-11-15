@@ -10,3 +10,5 @@ Simple in memory cache implementation with redis kind interface. Following featu
 
 
 # Example usage
+
+[Examples](https://github.com/addit-digital/addcache/blob/2ec3be2f56917ab46aad0a465e560093de782492/examples/main.go)
