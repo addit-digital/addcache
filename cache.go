@@ -23,14 +23,24 @@ type Cache interface {
 	CreateKey(args ...string) string
 	CreateKeyWithDelimiter(delimiter string, args ...string) string
 	StopCleanup()
+	SetHook(operationType OperationType, handlerFunctions ...HandlerFunc)
 }
+
+type HandlerFunc func(key string, data any)
+type OperationType string
+
+const (
+	DeleteOperation OperationType = "Delete"
+	CreateOperation OperationType = "Create"
+)
 
 // local handling of cache implementation
 type storage struct {
-	stop chan struct{}
-	wg   sync.WaitGroup
-	mu   sync.RWMutex
-	data map[string]storageData
+	stop  chan struct{}
+	wg    sync.WaitGroup
+	mu    sync.RWMutex
+	data  map[string]storageData
+	hooks map[OperationType][]HandlerFunc
 }
 
 type storageData struct {
@@ -46,8 +56,9 @@ func NewCache() Cache {
 
 func NewCacheWithCleanup(cleanupInterval time.Duration) Cache {
 	storage := storage{
-		stop: make(chan struct{}),
-		data: make(map[string]storageData),
+		stop:  make(chan struct{}),
+		data:  make(map[string]storageData),
+		hooks: make(map[OperationType][]HandlerFunc),
 	}
 
 	storage.wg.Add(1)
@@ -66,6 +77,7 @@ func (s *storage) Set(key string, data any) {
 		expireDuration: 0,
 		data:           data,
 	}
+	s.processHooks(CreateOperation, key, data)
 }
 
 func (s *storage) SetEx(key string, data any, duration time.Duration) {
@@ -75,6 +87,7 @@ func (s *storage) SetEx(key string, data any, duration time.Duration) {
 		expireDuration: duration,
 		data:           data,
 	}
+	s.processHooks(CreateOperation, key, data)
 }
 
 func (s *storage) Get(key string) (any, error) {
@@ -88,7 +101,10 @@ func (s *storage) Get(key string) (any, error) {
 }
 
 func (s *storage) Delete(key string) {
-	delete(s.data, key)
+	if data, ok := s.data[key]; ok {
+		delete(s.data, key)
+		s.processHooks(DeleteOperation, key, data)
+	}
 }
 
 func (s *storage) CreateKey(args ...string) string {
@@ -101,6 +117,16 @@ func (s *storage) CreateKeyWithDelimiter(delimiter string, args ...string) strin
 
 func (s *storage) StopCleanup() {
 	s.stop <- struct{}{}
+}
+
+func (s *storage) SetHook(operationType OperationType, handlerFunctions ...HandlerFunc) {
+	if handlers, ok := s.hooks[operationType]; ok {
+		for _, handlerFunction := range handlerFunctions {
+			handlers = append(handlers, handlerFunction)
+		}
+	} else {
+		s.hooks[operationType] = handlerFunctions
+	}
 }
 
 func (s *storage) cleanupLoop(interval time.Duration) {
@@ -120,13 +146,21 @@ func (s *storage) cleanupLoop(interval time.Duration) {
 	}
 }
 
-func (s storage) removeIfExpired(key string, sd storageData) bool {
+func (s *storage) removeIfExpired(key string, sd storageData) bool {
 	if sd.isPersistence {
 		return false
 	}
 	if sd.setTime.Add(sd.expireDuration).Unix() <= time.Now().Unix() {
-		delete(s.data, key)
+		s.Delete(key)
 		return true
 	}
 	return false
+}
+
+func (s *storage) processHooks(operationType OperationType, key string, data any) {
+	if handlerFunctions, ok := s.hooks[operationType]; ok {
+		for _, handlerFunction := range handlerFunctions {
+			handlerFunction(key, data)
+		}
+	}
 }
