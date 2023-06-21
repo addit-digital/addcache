@@ -103,7 +103,7 @@ func (s *storage) Get(key string) (any, error) {
 func (s *storage) Delete(key string) {
 	if data, ok := s.data[key]; ok {
 		delete(s.data, key)
-		s.processHooks(DeleteOperation, key, data)
+		s.processHooks(DeleteOperation, key, data.data)
 	}
 }
 
